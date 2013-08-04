@@ -1,5 +1,8 @@
-#if !defined(ANDROID_r2_2_0) && !defined(ANDROID_r2_3_3) && !defined(ANDROID_r3_0_1) && !defined(ANDROID_r4_0_0) && !defined(ANDROID_r4_0_3) && !defined(ANDROID_r4_1_1) && !defined(ANDROID_r4_2_0)
-# error Building camera wrapper for your version of Android is not supported by OpenCV. You need to modify OpenCV sources in order to compile camera wrapper for your version of Android.
+#if !defined(ANDROID_r2_2_0) && !defined(ANDROID_r2_3_3) && !defined(ANDROID_r3_0_1) && \
+ !defined(ANDROID_r4_0_0) && !defined(ANDROID_r4_0_3) && !defined(ANDROID_r4_1_1) && \
+ !defined(ANDROID_r4_2_0) && !defined(ANDROID_r4_3_0)
+# error Building camera wrapper for your version of Android is not supported by OpenCV.\
+ You need to modify OpenCV sources in order to compile camera wrapper for your version of Android.
 #endif
 
 #include <camera/Camera.h>
@@ -16,15 +19,15 @@
 //Include SurfaceTexture.h file with the SurfaceTexture class
 # include <gui/SurfaceTexture.h>
 # define MAGIC_OPENCV_TEXTURE_ID (0x10)
-#else // defined(ANDROID_r3_0_1) || defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3)
-//TODO: This is either 2.2 or 2.3. Include the headers for ISurface.h access
-#if defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0)
-#include <gui/ISurface.h>
-#include <gui/BufferQueue.h>
+#elif defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0)
+# include <gui/ISurface.h>
+# include <gui/BufferQueue.h>
+#elif defined(ANDROID_r4_3_0)
+# include <gui/IGraphicBufferProducer.h>
+# include <gui/BufferQueue.h>
 #else
 # include <surfaceflinger/ISurface.h>
-#endif  // defined(ANDROID_r4_1_1)
-#endif  // defined(ANDROID_r3_0_1) || defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3)
+#endif
 
 #include <string>
 
@@ -45,7 +48,6 @@
 # undef LOGE
 #endif
 
-
 // LOGGING
 #include <android/log.h>
 #define CAMERA_LOG_TAG "OpenCV_NativeCamera"
@@ -60,7 +62,7 @@ using namespace android;
 
 void debugShowFPS();
 
-#if defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0)
+#if defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
 class ConsumerListenerStub: public BufferQueue::ConsumerListener
 {
 public:
@@ -280,7 +282,7 @@ public:
     }
 
     virtual void postData(int32_t msgType, const sp<IMemory>& dataPtr
-    #if defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3) || defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0)
+    #if defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3) || defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
                           ,camera_frame_metadata_t*
 #endif
                           )
@@ -361,7 +363,8 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
     typedef sp<Camera> (*Android22ConnectFuncType)();
     typedef sp<Camera> (*Android23ConnectFuncType)(int);
     typedef sp<Camera> (*Android3DConnectFuncType)(int, int);
-
+    typedef sp<Camera> (*Android43ConnectFuncType)(int, const String16&, int);
+    
     const int BACK_CAMERA_INDEX = 99;
     const int FRONT_CAMERA_INDEX = 98;
 
@@ -372,12 +375,18 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
     CAMERA_SUPPORT_MODE_ZSL = 0x08 /* Camera Sensor supports ZSL mode. */
     };
 
+    // used for Android 4.3
+    enum {
+        USE_CALLING_UID = -1
+    };
+    
     const char Android22ConnectName[] = "_ZN7android6Camera7connectEv";
     const char Android23ConnectName[] = "_ZN7android6Camera7connectEi";
     const char Android3DConnectName[] = "_ZN7android6Camera7connectEii";
-
+    const char Android43ConnectName[] = "_ZN7android6Camera7connectEiRKNS_8String16Ei";
+    
     int localCameraIndex = cameraId;
-
+    
 #if !defined(ANDROID_r2_2_0)
     if (cameraId == BACK_CAMERA_INDEX)
     {
@@ -420,6 +429,8 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
     }
 #endif
 
+    localCameraIndex = 0;
+
     LOGD("CameraHandler::initCameraConnect(%p, %d, %p, %p)", callback, localCameraIndex, userData, prevCameraParameters);
 
     sp<Camera> camera = 0;
@@ -450,13 +461,19 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
         LOGD("Connecting to CameraService v 3D");
         camera = Android3DConnect(localCameraIndex, CAMERA_SUPPORT_MODE_2D);
     }
+    else if (Android43ConnectFuncType Android43Connect = (Android43ConnectFuncType)dlsym(CameraHALHandle, Android43ConnectName))
+    {
+        std::string currentProcName = "org.opencv.samples.tutorial1";
+        LOGD("Current process name for camera init: %s", currentProcName.c_str());
+        camera = Android43Connect(localCameraIndex, String16(currentProcName.c_str()), USE_CALLING_UID);
+    }
     else
     {
         dlclose(CameraHALHandle);
         LOGE("Cannot connect to CameraService. Connect method was not found!");
         return NULL;
     }
-
+    
     dlclose(CameraHALHandle);
 
     if ( 0 == camera.get() )
@@ -471,7 +488,7 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
     handler->camera = camera;
     handler->cameraId = localCameraIndex;
 
-    if (prevCameraParameters != 0)
+    if (prevCameraParameters != NULL)
     {
         LOGI("initCameraConnect: Setting paramers from previous camera handler");
         camera->setParameters(prevCameraParameters->flatten());
@@ -503,11 +520,11 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
         const char* available_focus_modes = handler->params.get(CameraParameters::KEY_SUPPORTED_FOCUS_MODES);
         if (available_focus_modes != 0)
         {
-        if (strstr(available_focus_modes, "continuous-video") != NULL)
-        {
-        handler->params.set(CameraParameters::KEY_FOCUS_MODE, CameraParameters::FOCUS_MODE_CONTINUOUS_VIDEO);
+            if (strstr(available_focus_modes, "continuous-video") != NULL)
+            {
+                handler->params.set(CameraParameters::KEY_FOCUS_MODE, CameraParameters::FOCUS_MODE_CONTINUOUS_VIDEO);
 
-        status_t resParams = handler->camera->setParameters(handler->params.flatten());
+                status_t resParams = handler->camera->setParameters(handler->params.flatten());
 
                 if (resParams != 0)
                 {
@@ -517,8 +534,8 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
                 {
                     LOGD("initCameraConnect: autofocus is set to mode \"continuous-video\"");
                 }
+            }
         }
-    }
 #endif
 
         //check if yuv420sp format available. Set this format as preview format.
@@ -560,26 +577,25 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
         }
     }
 
-    status_t pdstatus;
+    status_t bufferStatus;
 #if defined(ANDROID_r2_2_0)
-    pdstatus = camera->setPreviewDisplay(sp<ISurface>(0 /*new DummySurface*/));
-    if (pdstatus != 0)
-        LOGE("initCameraConnect: failed setPreviewDisplay(0) call; camera migth not work correctly on some devices");
+    bufferStatus = camera->setPreviewDisplay(sp<ISurface>(0 /*new DummySurface*/));
+    if (bufferStatus != 0)
+        LOGE("initCameraConnect: failed setPreviewDisplay(0) call (status %d); camera migth not work correctly on some devices", bufferStatus);
 #elif defined(ANDROID_r2_3_3)
     /* Do nothing in case of 2.3 for now */
-
 #elif defined(ANDROID_r3_0_1) || defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3)
     sp<SurfaceTexture> surfaceTexture = new SurfaceTexture(MAGIC_OPENCV_TEXTURE_ID);
-    pdstatus = camera->setPreviewTexture(surfaceTexture);
-    if (pdstatus != 0)
-        LOGE("initCameraConnect: failed setPreviewTexture call; camera migth not work correctly");
-#elif defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0)
+    bufferStatus = camera->setPreviewTexture(surfaceTexture);
+    if (bufferStatus != 0)
+        LOGE("initCameraConnect: failed setPreviewTexture call (status %d); camera migth not work correctly", bufferStatus);
+#elif defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
     sp<BufferQueue> bufferQueue = new BufferQueue();
     sp<BufferQueue::ConsumerListener> queueListener = new ConsumerListenerStub();
     bufferQueue->consumerConnect(queueListener);
-    pdstatus = camera->setPreviewTexture(bufferQueue);
-    if (pdstatus != 0)
-    LOGE("initCameraConnect: failed setPreviewTexture call; camera migth not work correctly");
+    bufferStatus = camera->setPreviewTexture(bufferQueue);
+    if (bufferStatus != 0)
+        LOGE("initCameraConnect: failed setPreviewTexture call; camera migth not work correctly");
 #endif
 
 #if (defined(ANDROID_r2_2_0) || defined(ANDROID_r2_3_3) || defined(ANDROID_r3_0_1))
@@ -595,9 +611,9 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
 #endif //!(defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3))
 
     LOGD("Starting preview");
-    status_t resStart = camera->startPreview();
+    status_t previewStatus = camera->startPreview();
 
-    if (resStart != 0)
+    if (previewStatus != 0)
     {
         LOGE("initCameraConnect: startPreview() fails. Closing camera connection...");
         handler->closeCameraConnect();
@@ -605,7 +621,7 @@ CameraHandler* CameraHandler::initCameraConnect(const CameraCallback& callback, 
     }
     else
     {
-    LOGD("Preview started successfully");
+        LOGD("Preview started successfully");
     }
 
     return handler;
@@ -618,11 +634,15 @@ void CameraHandler::closeCameraConnect()
         LOGI("... camera is already NULL");
         return;
     }
-
+    
     camera->stopPreview();
+#if defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3) || defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
+    camera->setPreviewCallbackFlags(CAMERA_FRAME_CALLBACK_FLAG_NOOP);
+#endif
+#if defined(ANDROID_r4_3_0)
     camera->disconnect();
+#endif
     camera.clear();
-
     camera=NULL;
     // ATTENTION!!!!!!!!!!!!!!!!!!!!!!!!!!
     // When we set
@@ -854,44 +874,83 @@ void CameraHandler::setProperty(int propIdx, double value)
 void CameraHandler::applyProperties(CameraHandler** ppcameraHandler)
 {
     LOGD("CameraHandler::applyProperties()");
-
+    
     if (ppcameraHandler == 0)
     {
         LOGE("applyProperties: Passed NULL ppcameraHandler");
         return;
     }
-
+    
     if (*ppcameraHandler == 0)
     {
-        LOGE("applyProperties: Passed null *ppcameraHandler");
+        LOGE("applyProperties: Passed NULL *ppcameraHandler");
+        return;
+    }
+    
+    CameraHandler* handler=*ppcameraHandler;
+    CameraParameters curCameraParameters(handler->params.flatten());
+    
+    handler->camera->stopPreview();
+
+#if defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3) || defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
+    handler->camera->setPreviewCallbackFlags(CAMERA_FRAME_CALLBACK_FLAG_NOOP);
+#endif
+    status_t reconnectStatus = handler->camera->reconnect();
+    if (reconnectStatus != 0)
+    {
+        LOGE("applyProperties: failed to reconnect camera (status %d)", reconnectStatus);
         return;
     }
 
-    LOGD("CameraHandler::applyProperties()");
-    CameraHandler* previousCameraHandler=*ppcameraHandler;
-    CameraParameters curCameraParameters(previousCameraHandler->params.flatten());
+    handler->camera->setParameters(curCameraParameters.flatten());
+    handler->params.unflatten(curCameraParameters.flatten());
+    
+    status_t bufferStatus;
+#if defined(ANDROID_r2_2_0)
+    bufferStatus = handler->camera->setPreviewDisplay(sp<ISurface>(0 /*new DummySurface*/));
+    if (bufferStatus != 0)
+        LOGE("applyProperties: failed setPreviewDisplay(0) call (status %d); camera migth not work correctly on some devices", bufferStatus);
+#elif defined(ANDROID_r2_3_3)
+    /* Do nothing in case of 2.3 for now */
+#elif defined(ANDROID_r3_0_1) || defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3)
+    sp<SurfaceTexture> surfaceTexture = new SurfaceTexture(MAGIC_OPENCV_TEXTURE_ID);
+    bufferStatus = handler->camera->setPreviewTexture(surfaceTexture);
+    if (bufferStatus != 0)
+        LOGE("applyProperties: failed setPreviewTexture call (status %d); camera migth not work correctly", bufferStatus);
+#elif defined(ANDROID_r4_1_1) || defined(ANDROID_r4_2_0) || defined(ANDROID_r4_3_0)
+    sp<BufferQueue> bufferQueue = new BufferQueue();
+    sp<BufferQueue::ConsumerListener> queueListener = new ConsumerListenerStub();
+    bufferQueue->consumerConnect(queueListener);
+    bufferStatus = handler->camera->setPreviewTexture(bufferQueue);
+    if (bufferStatus != 0)
+        LOGE("applyProperties: failed setPreviewTexture call; camera migth not work correctly");
+#endif
+        
+#if (defined(ANDROID_r2_2_0) || defined(ANDROID_r2_3_3) || defined(ANDROID_r3_0_1))
+# if 1
+    ////ATTENTION: switching between two versions: with and without copying memory inside Android OS
+    //// see the method  CameraService::Client::copyFrameAndPostCopiedFrame and where it is used
+    handler->camera->setPreviewCallbackFlags( FRAME_CALLBACK_FLAG_ENABLE_MASK | FRAME_CALLBACK_FLAG_COPY_OUT_MASK);//with copy
+# else
+    handler->camera->setPreviewCallbackFlags( FRAME_CALLBACK_FLAG_ENABLE_MASK );//without copy
+# endif
+#else
+    handler->camera->setPreviewCallbackFlags( CAMERA_FRAME_CALLBACK_FLAG_ENABLE_MASK | CAMERA_FRAME_CALLBACK_FLAG_COPY_OUT_MASK);//with copy
+#endif //!(defined(ANDROID_r4_0_0) || defined(ANDROID_r4_0_3))
+        
+    LOGD("Starting preview");
+    status_t previewStatus = handler->camera->startPreview();
 
-    CameraCallback cameraCallback=previousCameraHandler->cameraCallback;
-    void* userData=previousCameraHandler->userData;
-    int cameraId=previousCameraHandler->cameraId;
-
-    LOGD("CameraHandler::applyProperties(): before previousCameraHandler->closeCameraConnect");
-    previousCameraHandler->closeCameraConnect();
-    LOGD("CameraHandler::applyProperties(): after previousCameraHandler->closeCameraConnect");
-
-
-    LOGD("CameraHandler::applyProperties(): before initCameraConnect");
-    CameraHandler* handler=initCameraConnect(cameraCallback, cameraId, userData, &curCameraParameters);
-    LOGD("CameraHandler::applyProperties(): after initCameraConnect, handler=0x%x", (int)handler);
-    if (handler == NULL) {
-        LOGE("ERROR in applyProperties --- cannot reinit camera");
-        handler=initCameraConnect(cameraCallback, cameraId, userData, NULL);
-        LOGD("CameraHandler::applyProperties(): repeate initCameraConnect after ERROR, handler=0x%x", (int)handler);
-        if (handler == NULL) {
-            LOGE("ERROR in applyProperties --- cannot reinit camera AGAIN --- cannot do anything else");
-        }
+    if (previewStatus != 0)
+    {
+        LOGE("initCameraConnect: startPreview() fails. Closing camera connection...");
+        handler->closeCameraConnect();
+        handler = NULL;
     }
-    (*ppcameraHandler)=handler;
+    else
+    {
+        LOGD("Preview started successfully");
+    }    
 }
 
 

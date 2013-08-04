@@ -44,6 +44,7 @@ public:
 
 private:
     static std::string pathLibFolder;
+    static std::string processName;
     static bool isConnectedToLib;
 
     static std::string getPathLibFolder();
@@ -62,6 +63,7 @@ private:
 };
 
 std::string CameraWrapperConnector::pathLibFolder;
+std::string CameraWrapperConnector::processName;
 
 bool CameraWrapperConnector::isConnectedToLib = false;
 InitCameraConnectC  CameraWrapperConnector::pInitCameraC = 0;
@@ -431,14 +433,14 @@ void CameraActivity::applyProperties()
 int CameraActivity::getFrameWidth()
 {
     if (frameWidth <= 0)
-    frameWidth = getProperty(ANDROID_CAMERA_PROPERTY_FRAMEWIDTH);
+        frameWidth = getProperty(ANDROID_CAMERA_PROPERTY_FRAMEWIDTH);
     return frameWidth;
 }
 
 int CameraActivity::getFrameHeight()
 {
     if (frameHeight <= 0)
-    frameHeight = getProperty(ANDROID_CAMERA_PROPERTY_FRAMEHEIGHT);
+        frameHeight = getProperty(ANDROID_CAMERA_PROPERTY_FRAMEHEIGHT);
     return frameHeight;
 }
 

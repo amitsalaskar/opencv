@@ -18,6 +18,6 @@
         android:visibility="gone"
         android:id="@+id/tutorial1_activity_native_surface_view"
         opencv:show_fps="true"
-        opencv:camera_id="any" />
+        opencv:camera_id="front" />
 
 </FrameLayout>
